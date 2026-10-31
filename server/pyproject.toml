@@ -1,0 +1,14 @@
+[project]
+name = "server"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+authors = [
+    { name = "yash", email = "yashchaurasia630@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard]>=0.162.0",
+    "httpx>=0.28.1",
+]
+
