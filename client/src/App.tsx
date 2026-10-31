@@ -15,7 +15,6 @@ import {
   processDeliveryDaySlots,
   calculateProcurementStats,
 } from "./services/api";
-import { generateMockJanuary2026Data } from "./services/mockData";
 import { Navbar } from "./components/Navbar";
 import { ControlsBar } from "./components/ControlsBar";
 import { ProcurementSummary } from "./components/ProcurementSummary";
@@ -26,14 +25,19 @@ import "./App.css";
 
 export function App() {
   // Query filters state
-  const [filters, setFilters] = useState<QueryFilters>({
-    decisionDate: "2026-01-15",
-    cutoffTime: "11:00",
-    deliveryDate: "2026-01-16",
+  const [filters, setFilters] = useState<QueryFilters>(() => {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    return {
+      decisionDate: todayStr,
+      cutoffTime: "11:00",
+      deliveryDate: tomorrowStr,
+    };
   });
 
-  // Demo mode state (synthetic January 2026 data fallback)
-  const [demoMode, setDemoMode] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
 
   // Backend telemetry status
@@ -83,97 +87,37 @@ export function App() {
     setIsLoading(true);
     setFetchError(null);
 
-    // If demo mode is active, load instant synthetic UK wind model
-    if (demoMode) {
-      const mock = generateMockJanuary2026Data(
-        filters.decisionDate,
-        filters.cutoffTime,
-        filters.deliveryDate,
-      );
-      setForecasts(mock.forecasts);
-      setActuals(mock.actuals);
-      setMetrics(mock.analytics);
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      // Query parameters for WINDFOR:
-      // WINDFOR expects publishDateTime range. We query from 2 days prior up to decision date cutoff
       const dFrom = `${filters.decisionDate}T00:00:00Z`;
       const dTo = `${filters.deliveryDate}T23:59:59Z`;
-
-      // Query parameters for FUELHH Actuals:
-      // Half-hourly actuals for delivery day
       const actualFrom = `${filters.deliveryDate}T00:00:00Z`;
       const actualTo = `${filters.deliveryDate}T23:59:59Z`;
+      // Use a rolling 30-day window for analytics to avoid fetching months of data
+      const analyticsToDate = new Date(`${filters.decisionDate}T00:00:00Z`);
+      const analyticsFromDate = new Date(analyticsToDate);
+      analyticsFromDate.setUTCDate(analyticsFromDate.getUTCDate() - 30);
+      const analyticsFrom = analyticsFromDate.toISOString().replace(".000Z", "Z");
+      const analyticsTo = analyticsToDate.toISOString().replace(".000Z", "Z");
 
-      // Query parameters for Analytics:
-      // Historical evaluation strictly prior to decision date (no peeking into future)
-      const analyticsFrom = "2026-01-01T00:00:00Z";
-      const analyticsTo = `${filters.decisionDate}T00:00:00Z`;
-
-      // Parallel data fetching across endpoints
       const [fData, aData, mData] = await Promise.allSettled([
         getForecastsRange(dFrom, dTo),
         getActuals(actualFrom, actualTo, "WIND"),
         getAnalytics(analyticsFrom, analyticsTo, filters.cutoffTime),
       ]);
 
-      let loadedForecasts: ForecastItem[] = [];
-      let loadedActuals: ActualItem[] = [];
-      let loadedMetrics: ErrorMetrics = { mae: null, rmse: null, bias: null };
-
-      if (fData.status === "fulfilled") {
-        loadedForecasts = fData.value;
-      }
-      if (aData.status === "fulfilled") {
-        loadedActuals = aData.value;
-      }
-      if (mData.status === "fulfilled") {
-        loadedMetrics = mData.value;
-      }
-
-      // If backend returned empty data or was unreachable, fallback gracefully to mock with notice
-      if (loadedForecasts.length === 0 && loadedActuals.length === 0) {
-        const mock = generateMockJanuary2026Data(
-          filters.decisionDate,
-          filters.cutoffTime,
-          filters.deliveryDate,
-        );
-        setForecasts(mock.forecasts);
-        setActuals(mock.actuals);
-        setMetrics(mock.analytics);
-        setFetchError(
-          "Backend feed returned no entries or is offline. Displaying January 2026 synthetic dataset.",
-        );
-      } else {
-        setForecasts(loadedForecasts);
-        setActuals(loadedActuals);
-        setMetrics(loadedMetrics);
-      }
+      setForecasts(fData.status === "fulfilled" ? fData.value : []);
+      setActuals(aData.status === "fulfilled" ? aData.value : []);
+      setMetrics(
+        mData.status === "fulfilled"
+          ? mData.value
+          : { mae: null, rmse: null, bias: null },
+      );
     } catch (err) {
-      // Network / CORS / Elexon rate limit failure fallback
-      const mock = generateMockJanuary2026Data(
-        filters.decisionDate,
-        filters.cutoffTime,
-        filters.deliveryDate,
-      );
-      setForecasts(mock.forecasts);
-      setActuals(mock.actuals);
-      setMetrics(mock.analytics);
-      setFetchError(
-        `API link note: ${err instanceof Error ? err.message : String(err)}. Displaying January 2026 demo data.`,
-      );
+      setFetchError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
-  }, [
-    demoMode,
-    filters.decisionDate,
-    filters.cutoffTime,
-    filters.deliveryDate,
-  ]);
+  }, [filters.decisionDate, filters.cutoffTime, filters.deliveryDate]);
 
   useEffect(() => {
     loadData();
@@ -207,23 +151,17 @@ export function App() {
     setFilters((prev) => ({ ...prev, ...newFilters }));
   };
 
-  const toggleDemoMode = () => {
-    setDemoMode((prev) => !prev);
-  };
-
   return (
     <div className="app-chassis">
       {/* Top Navbar */}
       <Navbar
         backendStatus={backendStatus}
-        demoMode={demoMode}
-        onToggleDemoMode={toggleDemoMode}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
       />
 
       <main className="dashboard-content">
-        {/* Banner if demo mode or fallback active */}
-        {fetchError && !demoMode && (
+        {/* Banner if fetch error occurred */}
+        {fetchError && (
           <div className="chassis-notice-banner font-mono">
             <span className="notice-icon">ℹ</span>
             <span>{fetchError}</span>

@@ -4,25 +4,26 @@ import type {
   ErrorMetrics,
   DeliverySlot,
   ProcurementSummaryStats,
-} from '../types';
+} from "../types";
 
-// In local dev with Vite proxy or in Vercel production rewrites, '/api' is preferred.
-// If VITE_API_URL is explicitly set to http://localhost:8000, we attempt direct calls
-// but gracefully fall back to '/api' if the browser blocks direct CORS requests.
-const ENV_API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
-export const API_BASE = ENV_API_URL ? `${ENV_API_URL}/api` : '/api';
+// gracefully fall back to '/api' if the browser blocks direct CORS requests.
+const ENV_API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+export const API_BASE = ENV_API_URL ? `${ENV_API_URL}/api` : "/api";
 
 /**
  * Executes a fetch with timeout, automatic fallback between direct URL and proxy,
  * and descriptive error handling.
  */
-async function fetchWithFallback<T>(endpointPath: string, options?: RequestInit): Promise<T> {
+async function fetchWithFallback<T>(
+  endpointPath: string,
+  options?: RequestInit,
+): Promise<T> {
   const primaryUrl = `${API_BASE}${endpointPath}`;
   const proxyUrl = `/api${endpointPath}`;
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
 
     const res = await fetch(primaryUrl, {
       ...options,
@@ -36,7 +37,6 @@ async function fetchWithFallback<T>(endpointPath: string, options?: RequestInit)
     const json = await res.json();
     return (json.data !== undefined ? json.data : json) as T;
   } catch (err) {
-    // If primary direct call failed (e.g. CORS or network error) and we have a proxy path available
     if (primaryUrl !== proxyUrl) {
       try {
         const proxyRes = await fetch(proxyUrl, options);
@@ -58,13 +58,15 @@ async function fetchWithFallback<T>(endpointPath: string, options?: RequestInit)
  */
 export async function getForecastsRange(
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
 ): Promise<ForecastItem[]> {
   const params = new URLSearchParams({
     date_from: dateFrom,
     date_to: dateTo,
   });
-  return fetchWithFallback<ForecastItem[]>(`/forecasts/range?${params.toString()}`);
+  return fetchWithFallback<ForecastItem[]>(
+    `/forecasts/range?${params.toString()}`,
+  );
 }
 
 /**
@@ -74,7 +76,7 @@ export async function getForecastsRange(
 export async function getActuals(
   dateFrom: string,
   dateTo: string,
-  fuelType: string = 'WIND'
+  fuelType: string = "WIND",
 ): Promise<ActualItem[]> {
   const params = new URLSearchParams({
     date_from: dateFrom,
@@ -91,7 +93,7 @@ export async function getActuals(
 export async function getAnalytics(
   dateFrom: string,
   dateTo: string,
-  cutoff: string = '11:00:00'
+  cutoff: string = "11:00:00",
 ): Promise<ErrorMetrics> {
   const params = new URLSearchParams({
     date_from: dateFrom,
@@ -110,11 +112,11 @@ export async function checkBackendPing(): Promise<{
   corsBlocked: boolean;
   message: string;
 }> {
-  const pingUrl = ENV_API_URL ? `${ENV_API_URL}/ping` : '/ping';
+  const pingUrl = ENV_API_URL ? `${ENV_API_URL}/ping` : "/ping";
   const start = performance.now();
 
   try {
-    const res = await fetch(pingUrl, { method: 'GET' });
+    const res = await fetch(pingUrl, { method: "GET" });
     const elapsed = Math.round(performance.now() - start);
 
     if (res.ok) {
@@ -123,7 +125,7 @@ export async function checkBackendPing(): Promise<{
         online: true,
         pingMs: elapsed,
         corsBlocked: false,
-        message: data.message || 'pong',
+        message: data.message || "pong",
       };
     }
     return {
@@ -134,12 +136,14 @@ export async function checkBackendPing(): Promise<{
     };
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    const isCors = errMsg.toLowerCase().includes('failed to fetch') || errMsg.toLowerCase().includes('network');
+    const isCors =
+      errMsg.toLowerCase().includes("failed to fetch") ||
+      errMsg.toLowerCase().includes("network");
     return {
       online: false,
       pingMs: null,
       corsBlocked: isCors,
-      message: isCors ? 'CORS or Connection Refused' : errMsg,
+      message: isCors ? "CORS or Connection Refused" : errMsg,
     };
   }
 }
@@ -154,11 +158,14 @@ export function processDeliveryDaySlots(
   cutoffTimeStr: string,
   forecasts: ForecastItem[],
   actuals: ActualItem[],
-  mae: number | null
+  mae: number | null,
 ): DeliverySlot[] {
   const slots: DeliverySlot[] = [];
-  const cutoffTimeNormalized = cutoffTimeStr.length === 5 ? `${cutoffTimeStr}:00` : cutoffTimeStr;
-  const cutoffLimitMs = new Date(`${decisionDateStr}T${cutoffTimeNormalized}Z`).getTime();
+  const cutoffTimeNormalized =
+    cutoffTimeStr.length === 5 ? `${cutoffTimeStr}:00` : cutoffTimeStr;
+  const cutoffLimitMs = new Date(
+    `${decisionDateStr}T${cutoffTimeNormalized}Z`,
+  ).getTime();
 
   // Index actuals by startTime for O(1) lookup
   const actualsMap = new Map<string, number>();
@@ -178,8 +185,8 @@ export function processDeliveryDaySlots(
     const totalMinutes = (period - 1) * 30;
     const hour = Math.floor(totalMinutes / 60);
     const minute = totalMinutes % 60;
-    const hourStr = String(hour).padStart(2, '0');
-    const minStr = String(minute).padStart(2, '0');
+    const hourStr = String(hour).padStart(2, "0");
+    const minStr = String(minute).padStart(2, "0");
     const startTime = `${deliveryDateStr}T${hourStr}:${minStr}:00Z`;
     const timeLabel = `${hourStr}:${minStr}`;
 
@@ -195,20 +202,29 @@ export function processDeliveryDaySlots(
     if (validPreCutoff.length > 0) {
       // Pick the latest available forecast published before cutoff
       chosenForecast = validPreCutoff.reduce((latest, item) =>
-        new Date(item.publishTime).getTime() > new Date(latest.publishTime).getTime() ? item : latest
+        new Date(item.publishTime).getTime() >
+        new Date(latest.publishTime).getTime()
+          ? item
+          : latest,
       );
     }
 
     const forecastMw = chosenForecast ? chosenForecast.generation : null;
-    const forecastPublishTime = chosenForecast ? chosenForecast.publishTime : null;
-    const actualMw = actualsMap.has(startTime) ? (actualsMap.get(startTime) ?? null) : null;
+    const forecastPublishTime = chosenForecast
+      ? chosenForecast.publishTime
+      : null;
+    const actualMw = actualsMap.has(startTime)
+      ? (actualsMap.get(startTime) ?? null)
+      : null;
 
     const errorMw =
       forecastMw !== null && actualMw !== null ? forecastMw - actualMw : null;
 
     const effectiveMae = mae !== null && mae > 0 ? mae : 200;
-    const maeBoundLower = forecastMw !== null ? Math.max(0, forecastMw - effectiveMae) : null;
-    const maeBoundUpper = forecastMw !== null ? forecastMw + effectiveMae : null;
+    const maeBoundLower =
+      forecastMw !== null ? Math.max(0, forecastMw - effectiveMae) : null;
+    const maeBoundUpper =
+      forecastMw !== null ? forecastMw + effectiveMae : null;
 
     slots.push({
       periodNumber: period,
@@ -231,21 +247,24 @@ export function processDeliveryDaySlots(
  */
 export function calculateProcurementStats(
   slots: DeliverySlot[],
-  mae: number | null
+  mae: number | null,
 ): ProcurementSummaryStats {
   const validForecasts = slots.filter((s) => s.forecastMw !== null);
   const validActuals = slots.filter((s) => s.actualMw !== null);
 
   // Generation values are average MW over 30 minutes (0.5 hours) => MWh = MW * 0.5
-  const totalForecastMwh = validForecasts.reduce((sum, s) => sum + (s.forecastMw || 0) * 0.5, 0);
+  const totalForecastMwh = validForecasts.reduce(
+    (sum, s) => sum + (s.forecastMw || 0) * 0.5,
+    0,
+  );
   const totalActualMwh = validActuals.length
     ? validActuals.reduce((sum, s) => sum + (s.actualMw || 0) * 0.5, 0)
     : null;
 
   let peakForecastMw = 0;
-  let peakPeriodLabel = '--:--';
+  let peakPeriodLabel = "--:--";
   let minForecastMw = Infinity;
-  let minPeriodLabel = '--:--';
+  let minPeriodLabel = "--:--";
 
   validForecasts.forEach((s) => {
     const mw = s.forecastMw || 0;
@@ -262,7 +281,10 @@ export function calculateProcurementStats(
   if (minForecastMw === Infinity) minForecastMw = 0;
 
   const avgForecastMw = validForecasts.length
-    ? Math.round(validForecasts.reduce((sum, s) => sum + (s.forecastMw || 0), 0) / validForecasts.length)
+    ? Math.round(
+        validForecasts.reduce((sum, s) => sum + (s.forecastMw || 0), 0) /
+          validForecasts.length,
+      )
     : 0;
 
   // Recommended spinning/standby reserve margin to procure from non-renewables:
@@ -271,7 +293,10 @@ export function calculateProcurementStats(
 
   return {
     totalForecastGwh: Math.round((totalForecastMwh / 1000) * 10) / 10,
-    totalActualGwh: totalActualMwh !== null ? Math.round((totalActualMwh / 1000) * 10) / 10 : null,
+    totalActualGwh:
+      totalActualMwh !== null
+        ? Math.round((totalActualMwh / 1000) * 10) / 10
+        : null,
     peakForecastMw: Math.round(peakForecastMw),
     peakPeriodLabel,
     minForecastMw: Math.round(minForecastMw),

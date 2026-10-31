@@ -12,7 +12,7 @@ async def lifespan(app: FastAPI):
     yield
     await http_client.shutdown()
 
-origins = ["http://localhost:3000"]
+origins = ["http://localhost:3000", "http://localhost:5173"]
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,

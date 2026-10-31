@@ -51,6 +51,23 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
 
   const todayIso = new Date().toISOString().split('T')[0];
 
+  // Compute relative preset dates
+  const yesterday = (() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+  const lastWeek = (() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 7);
+    return d.toISOString().split('T')[0];
+  })();
+  const lastMonth = (() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 30);
+    return d.toISOString().split('T')[0];
+  })();
+
   return (
     <section className="controls-chassis">
       <div className="controls-grid">
@@ -72,24 +89,24 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
           <div className="control-presets font-mono">
             <button
               type="button"
-              className={`preset-btn ${filters.decisionDate === '2026-01-05' ? 'preset-active' : ''}`}
-              onClick={() => setPresetDate('2026-01-05')}
+              className={`preset-btn ${filters.decisionDate === lastMonth ? 'preset-active' : ''}`}
+              onClick={() => setPresetDate(lastMonth)}
             >
-              Jan 05
+              -30d
             </button>
             <button
               type="button"
-              className={`preset-btn ${filters.decisionDate === '2026-01-15' ? 'preset-active' : ''}`}
-              onClick={() => setPresetDate('2026-01-15')}
+              className={`preset-btn ${filters.decisionDate === lastWeek ? 'preset-active' : ''}`}
+              onClick={() => setPresetDate(lastWeek)}
             >
-              Jan 15
+              -7d
             </button>
             <button
               type="button"
-              className={`preset-btn ${filters.decisionDate === '2026-01-25' ? 'preset-active' : ''}`}
-              onClick={() => setPresetDate('2026-01-25')}
+              className={`preset-btn ${filters.decisionDate === yesterday ? 'preset-active' : ''}`}
+              onClick={() => setPresetDate(yesterday)}
             >
-              Jan 25
+              Yesterday
             </button>
             <button
               type="button"

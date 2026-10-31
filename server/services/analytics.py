@@ -1,4 +1,5 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from collections import defaultdict
 from services import elexon
 
 
@@ -7,24 +8,34 @@ async def get_error_metrics(
     date_to: datetime,
     cutoff_time: time
 ):
-    actuals = await elexon.get_actuals(date_from, date_to)
-    forecasts = await elexon.get_forecasts(date_from, date_to)
+    actuals_from = date_from + timedelta(days=1)
+    actuals_to = date_to + timedelta(days=1)
+
+    actuals = await elexon.get_actuals(actuals_from, actuals_to)
+    forecasts = await elexon.get_forecasts(date_from, actuals_to)
+
+    forecasts_by_start: dict[str, list] = defaultdict(list)
+    for f in forecasts:
+        forecasts_by_start[f["startTime"]].append(f)
 
     errors = []
 
     for actual in actuals:
+        start_time_str = actual["startTime"]
+
+        start_dt = datetime.fromisoformat(start_time_str.replace("Z", ""))
+        decision_day = start_dt.date() - timedelta(days=1)
         cutoff_dt = datetime(
-            int(actual["startTime"][:4]),
-            int(actual["startTime"][5:7]),
-            int(actual["startTime"][8:10]),
+            decision_day.year,
+            decision_day.month,
+            decision_day.day,
             cutoff_time.hour,
-            cutoff_time.minute
+            cutoff_time.minute,
         )
 
         matching = [
-            f for f in forecasts
-            if f["startTime"] == actual["startTime"]
-            and datetime.fromisoformat(f["publishTime"].replace("Z", "")) < cutoff_dt
+            f for f in forecasts_by_start.get(start_time_str, [])
+            if datetime.fromisoformat(f["publishTime"].replace("Z", "")) < cutoff_dt
         ]
 
         if not matching:

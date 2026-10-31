@@ -18,9 +18,10 @@ async def get_latest_forecasts(cutoff_time: time = elexon.CUTOFF_TIME):
     cutoff_dt = datetime.combine(now.date(), cutoff_time)
 
     data = await elexon.get_forecasts(date_from=now-timedelta(days=1), date_to=now+timedelta(days=2))
-    i = 0
-    for i in range(len(data)):
-        if not datetime.fromisoformat(data[i]["publishTime"].replace("Z", "")) <= cutoff_dt:
-            break
 
-    return {"data": data[:i+1]}
+    filtered = [
+        item for item in data
+        if datetime.fromisoformat(item["publishTime"].replace("Z", "")) <= cutoff_dt
+    ]
+
+    return {"data": filtered}
