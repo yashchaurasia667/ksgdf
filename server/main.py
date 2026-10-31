@@ -12,13 +12,14 @@ async def lifespan(app: FastAPI):
     yield
     await http_client.shutdown()
 
-origins = ["http://localhost:3000/"]
+origins = ["http://localhost:3000"]
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET"]
+    allow_methods=["GET"],
+    allow_headers=["*"]
 )
 
 app.include_router(forecasts.router, prefix="/api")

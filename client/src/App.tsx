@@ -1,121 +1,302 @@
-import { useState } from "react";
-import heroImg from "./assets/hero.png";
-import reactLogo from "./assets/react.svg";
-import viteLogo from "./assets/vite.svg";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import type {
+  QueryFilters,
+  BackendStatus,
+  ForecastItem,
+  ActualItem,
+  ErrorMetrics,
+} from "./types";
+import {
+  API_BASE,
+  getForecastsRange,
+  getActuals,
+  getAnalytics,
+  checkBackendPing,
+  processDeliveryDaySlots,
+  calculateProcurementStats,
+} from "./services/api";
+import { generateMockJanuary2026Data } from "./services/mockData";
+import { Navbar } from "./components/Navbar";
+import { ControlsBar } from "./components/ControlsBar";
+import { ProcurementSummary } from "./components/ProcurementSummary";
+import { ForecastChart } from "./components/ForecastChart";
+import { MetricsPanel } from "./components/MetricsPanel";
+import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0);
+export function App() {
+  // Query filters state
+  const [filters, setFilters] = useState<QueryFilters>({
+    decisionDate: "2026-01-15",
+    cutoffTime: "11:00",
+    deliveryDate: "2026-01-16",
+  });
+
+  // Demo mode state (synthetic January 2026 data fallback)
+  const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+
+  // Backend telemetry status
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>({
+    online: false,
+    pingMs: null,
+    apiBaseUrl: API_BASE,
+    lastChecked: "--:--",
+    elexonStreamStatus: "online",
+    corsIssueDetected: false,
+  });
+
+  // Raw data states
+  const [forecasts, setForecasts] = useState<ForecastItem[]>([]);
+  const [actuals, setActuals] = useState<ActualItem[]>([]);
+  const [metrics, setMetrics] = useState<ErrorMetrics>({
+    mae: null,
+    rmse: null,
+    bias: null,
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Probe backend health
+  const probeBackend = useCallback(async () => {
+    const res = await checkBackendPing();
+    const nowStr = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    setBackendStatus({
+      online: res.online,
+      pingMs: res.pingMs,
+      apiBaseUrl: API_BASE,
+      lastChecked: nowStr,
+      elexonStreamStatus: res.online ? "online" : "offline",
+      corsIssueDetected: res.corsBlocked,
+      errorMessage: res.message,
+    });
+  }, []);
+
+  useEffect(() => {
+    probeBackend();
+    const timer = setInterval(probeBackend, 30000); // 30s heartbeat keep-alive
+    return () => clearInterval(timer);
+  }, [probeBackend]);
+
+  // Main data fetching orchestrator
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+
+    // If demo mode is active, load instant synthetic UK wind model
+    if (demoMode) {
+      const mock = generateMockJanuary2026Data(
+        filters.decisionDate,
+        filters.cutoffTime,
+        filters.deliveryDate,
+      );
+      setForecasts(mock.forecasts);
+      setActuals(mock.actuals);
+      setMetrics(mock.analytics);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      // Query parameters for WINDFOR:
+      // WINDFOR expects publishDateTime range. We query from 2 days prior up to decision date cutoff
+      const dFrom = `${filters.decisionDate}T00:00:00Z`;
+      const dTo = `${filters.deliveryDate}T23:59:59Z`;
+
+      // Query parameters for FUELHH Actuals:
+      // Half-hourly actuals for delivery day
+      const actualFrom = `${filters.deliveryDate}T00:00:00Z`;
+      const actualTo = `${filters.deliveryDate}T23:59:59Z`;
+
+      // Query parameters for Analytics:
+      // Historical evaluation strictly prior to decision date (no peeking into future)
+      const analyticsFrom = "2026-01-01T00:00:00Z";
+      const analyticsTo = `${filters.decisionDate}T00:00:00Z`;
+
+      // Parallel data fetching across endpoints
+      const [fData, aData, mData] = await Promise.allSettled([
+        getForecastsRange(dFrom, dTo),
+        getActuals(actualFrom, actualTo, "WIND"),
+        getAnalytics(analyticsFrom, analyticsTo, filters.cutoffTime),
+      ]);
+
+      let loadedForecasts: ForecastItem[] = [];
+      let loadedActuals: ActualItem[] = [];
+      let loadedMetrics: ErrorMetrics = { mae: null, rmse: null, bias: null };
+
+      if (fData.status === "fulfilled") {
+        loadedForecasts = fData.value;
+      }
+      if (aData.status === "fulfilled") {
+        loadedActuals = aData.value;
+      }
+      if (mData.status === "fulfilled") {
+        loadedMetrics = mData.value;
+      }
+
+      // If backend returned empty data or was unreachable, fallback gracefully to mock with notice
+      if (loadedForecasts.length === 0 && loadedActuals.length === 0) {
+        const mock = generateMockJanuary2026Data(
+          filters.decisionDate,
+          filters.cutoffTime,
+          filters.deliveryDate,
+        );
+        setForecasts(mock.forecasts);
+        setActuals(mock.actuals);
+        setMetrics(mock.analytics);
+        setFetchError(
+          "Backend feed returned no entries or is offline. Displaying January 2026 synthetic dataset.",
+        );
+      } else {
+        setForecasts(loadedForecasts);
+        setActuals(loadedActuals);
+        setMetrics(loadedMetrics);
+      }
+    } catch (err) {
+      // Network / CORS / Elexon rate limit failure fallback
+      const mock = generateMockJanuary2026Data(
+        filters.decisionDate,
+        filters.cutoffTime,
+        filters.deliveryDate,
+      );
+      setForecasts(mock.forecasts);
+      setActuals(mock.actuals);
+      setMetrics(mock.analytics);
+      setFetchError(
+        `API link note: ${err instanceof Error ? err.message : String(err)}. Displaying January 2026 demo data.`,
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    demoMode,
+    filters.decisionDate,
+    filters.cutoffTime,
+    filters.deliveryDate,
+  ]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Transform raw streams into 48 delivery slots enforcing honesty rule
+  const deliverySlots = useMemo(() => {
+    return processDeliveryDaySlots(
+      filters.deliveryDate,
+      filters.decisionDate,
+      filters.cutoffTime,
+      forecasts,
+      actuals,
+      metrics.mae,
+    );
+  }, [
+    filters.deliveryDate,
+    filters.decisionDate,
+    filters.cutoffTime,
+    forecasts,
+    actuals,
+    metrics.mae,
+  ]);
+
+  // Compute summary stats for day-ahead buying team
+  const procurementStats = useMemo(() => {
+    return calculateProcurementStats(deliverySlots, metrics.mae);
+  }, [deliverySlots, metrics.mae]);
+
+  const handleUpdateFilters = (newFilters: Partial<QueryFilters>) => {
+    setFilters((prev) => ({ ...prev, ...newFilters }));
+  };
+
+  const toggleDemoMode = () => {
+    setDemoMode((prev) => !prev);
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app-chassis">
+      {/* Top Navbar */}
+      <Navbar
+        backendStatus={backendStatus}
+        demoMode={demoMode}
+        onToggleDemoMode={toggleDemoMode}
+        onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+      />
 
-      <div className="ticks"></div>
+      <main className="dashboard-content">
+        {/* Banner if demo mode or fallback active */}
+        {fetchError && !demoMode && (
+          <div className="chassis-notice-banner font-mono">
+            <span className="notice-icon">ℹ</span>
+            <span>{fetchError}</span>
+            <button
+              type="button"
+              className="notice-action-btn"
+              onClick={() => setIsDiagnosticsOpen(true)}
+            >
+              DIAGNOSTICS
+            </button>
+          </div>
+        )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        {/* Controls Bar */}
+        <ControlsBar
+          filters={filters}
+          onChangeFilters={handleUpdateFilters}
+          onRefresh={loadData}
+          isFetching={isLoading}
+        />
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+        {/* Day-Ahead Buying Team Procurement Directive */}
+        <ProcurementSummary
+          stats={procurementStats}
+          deliveryDate={filters.deliveryDate}
+        />
+
+        {/* Delivery Day Forecast & Actuals Chart */}
+        <ForecastChart
+          slots={deliverySlots}
+          mae={metrics.mae}
+          deliveryDate={filters.deliveryDate}
+          isLoading={isLoading}
+        />
+
+        {/* Error Metrics Panel */}
+        <MetricsPanel
+          metrics={metrics}
+          decisionDate={filters.decisionDate}
+          cutoffTime={filters.cutoffTime}
+          isLoading={isLoading}
+        />
+      </main>
+
+      {/* Industrial Chassis Footer */}
+      <footer className="chassis-footer font-mono">
+        <div className="footer-left">
+          <span>GRIDBRICKS v1.0.0 // DAY-AHEAD WIND FORECAST DESK</span>
+        </div>
+        <div className="footer-center">
+          <span>
+            DATA PROVENANCE: ELEXON BMRS WINDFOR (FORECAST) + FUELHH (ACTUALS)
+          </span>
+        </div>
+        <div className="footer-right">
+          <button
+            type="button"
+            className="footer-link-btn"
+            onClick={() => setIsDiagnosticsOpen(true)}
+          >
+            [SYSTEM DIAGNOSTICS]
+          </button>
+        </div>
+      </footer>
+
+      {/* Diagnostics Modal */}
+      <DiagnosticsModal
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
+        status={backendStatus}
+        onRetest={probeBackend}
+      />
+    </div>
   );
 }
 
