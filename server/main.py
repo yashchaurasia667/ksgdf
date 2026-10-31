@@ -21,9 +21,9 @@ app.add_middleware(
     allow_methods=["GET"]
 )
 
-app.include_router(forecasts.router)
-app.include_router(actuals.router)
-app.include_router(analytics.router)
+app.include_router(forecasts.router, prefix="/api")
+app.include_router(actuals.router, prefix="/api")
+app.include_router(analytics.router, prefix="/api")
 
 
 @app.get("/ping")
