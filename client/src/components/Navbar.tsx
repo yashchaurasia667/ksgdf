@@ -1,15 +1,6 @@
 import React from "react";
-import type { BackendStatus } from "../types";
 
-interface NavbarProps {
-  backendStatus: BackendStatus;
-  onOpenDiagnostics: () => void;
-}
-
-export const Navbar: React.FC<NavbarProps> = ({
-  backendStatus,
-  onOpenDiagnostics,
-}) => {
+export const Navbar: React.FC = () => {
   return (
     <header className="navbar-container">
       <div className="navbar-left">
@@ -38,21 +29,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             ELEXON BMRS: <strong>WINDFOR</strong> + <strong>FUELHH</strong>
           </span>
         </div>
-
-        {/* Backend Status Pill */}
-        <button
-          type="button"
-          onClick={onOpenDiagnostics}
-          className={`status-pill font-mono ${backendStatus.online ? "status-online" : "status-offline"}`}
-          title="Click to view backend diagnostics and API configuration"
-        >
-          <span className="status-dot" />
-          <span>
-            {backendStatus.online
-              ? `SERVER: ${backendStatus.pingMs !== null ? `${backendStatus.pingMs}ms` : "UP"}`
-              : "SERVER: UNREACHABLE"}
-          </span>
-        </button>
       </div>
     </header>
   );

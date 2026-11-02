@@ -1,17 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type {
   QueryFilters,
-  BackendStatus,
   ForecastItem,
   ActualItem,
   ErrorMetrics,
 } from "./types";
 import {
-  API_BASE,
   getForecastsRange,
   getActuals,
   getAnalytics,
-  checkBackendPing,
   processDeliveryDaySlots,
   calculateProcurementStats,
 } from "./services/api";
@@ -20,34 +17,21 @@ import { ControlsBar } from "./components/ControlsBar";
 import { ProcurementSummary } from "./components/ProcurementSummary";
 import { ForecastChart } from "./components/ForecastChart";
 import { MetricsPanel } from "./components/MetricsPanel";
-import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import "./App.css";
 
 export function App() {
   // Query filters state
   const [filters, setFilters] = useState<QueryFilters>(() => {
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = today.toISOString().split("T")[0];
     const tomorrow = new Date(today);
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const tomorrowStr = tomorrow.toISOString().split("T")[0];
     return {
       decisionDate: todayStr,
       cutoffTime: "11:00",
       deliveryDate: tomorrowStr,
     };
-  });
-
-  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
-
-  // Backend telemetry status
-  const [backendStatus, setBackendStatus] = useState<BackendStatus>({
-    online: false,
-    pingMs: null,
-    apiBaseUrl: API_BASE,
-    lastChecked: "--:--",
-    elexonStreamStatus: "online",
-    corsIssueDetected: false,
   });
 
   // Raw data states
@@ -60,27 +44,6 @@ export function App() {
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-
-  // Probe backend health
-  const probeBackend = useCallback(async () => {
-    const res = await checkBackendPing();
-    const nowStr = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    setBackendStatus({
-      online: res.online,
-      pingMs: res.pingMs,
-      apiBaseUrl: API_BASE,
-      lastChecked: nowStr,
-      elexonStreamStatus: res.online ? "online" : "offline",
-      corsIssueDetected: res.corsBlocked,
-      errorMessage: res.message,
-    });
-  }, []);
-
-  useEffect(() => {
-    probeBackend();
-    const timer = setInterval(probeBackend, 30000); // 30s heartbeat keep-alive
-    return () => clearInterval(timer);
-  }, [probeBackend]);
 
   // Main data fetching orchestrator
   const loadData = useCallback(async () => {
@@ -96,7 +59,9 @@ export function App() {
       const analyticsToDate = new Date(`${filters.decisionDate}T00:00:00Z`);
       const analyticsFromDate = new Date(analyticsToDate);
       analyticsFromDate.setUTCDate(analyticsFromDate.getUTCDate() - 30);
-      const analyticsFrom = analyticsFromDate.toISOString().replace(".000Z", "Z");
+      const analyticsFrom = analyticsFromDate
+        .toISOString()
+        .replace(".000Z", "Z");
       const analyticsTo = analyticsToDate.toISOString().replace(".000Z", "Z");
 
       const [fData, aData, mData] = await Promise.allSettled([
@@ -154,10 +119,7 @@ export function App() {
   return (
     <div className="app-chassis">
       {/* Top Navbar */}
-      <Navbar
-        backendStatus={backendStatus}
-        onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
-      />
+      <Navbar />
 
       <main className="dashboard-content">
         {/* Banner if fetch error occurred */}
@@ -168,7 +130,7 @@ export function App() {
             <button
               type="button"
               className="notice-action-btn"
-              onClick={() => setIsDiagnosticsOpen(true)}
+              // onClick={() => setIsDiagnosticsOpen(true)}
             >
               DIAGNOSTICS
             </button>
@@ -216,24 +178,7 @@ export function App() {
             DATA PROVENANCE: ELEXON BMRS WINDFOR (FORECAST) + FUELHH (ACTUALS)
           </span>
         </div>
-        <div className="footer-right">
-          <button
-            type="button"
-            className="footer-link-btn"
-            onClick={() => setIsDiagnosticsOpen(true)}
-          >
-            [SYSTEM DIAGNOSTICS]
-          </button>
-        </div>
       </footer>
-
-      {/* Diagnostics Modal */}
-      <DiagnosticsModal
-        isOpen={isDiagnosticsOpen}
-        onClose={() => setIsDiagnosticsOpen(false)}
-        status={backendStatus}
-        onRetest={probeBackend}
-      />
     </div>
   );
 }
